@@ -1,0 +1,31 @@
+(dp1
+S'MusicDelta_Beethoven'
+p2
+c__builtin__
+set
+p3
+((lp4
+S'timpani'
+p5
+aS'viola'
+p6
+aS'oboe'
+p7
+aS'bassoon'
+p8
+aS'flute'
+p9
+aS'double bass'
+p10
+aS'cello'
+p11
+aS'french horn'
+p12
+aS'violin'
+p13
+aS'clarinet'
+p14
+aS'trumpet'
+p15
+atRp16
+s.

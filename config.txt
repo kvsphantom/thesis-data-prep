@@ -1,0 +1,351 @@
+_dh = [u'/home/kvshenoy/project/Thesis/code/notebooks_old']
+__ = 
+patch_label = <module 'patch_label' from 'patch_label.pyc'>
+backup_wavfile_reader = <function backup_wavfile_reader at 0x7f12f578e488>
+read_mixed_from_files = <function read_mixed_from_files at 0x7f12bc4d8f50>
+__builtin__ = <module '__builtin__' (built-in)>
+time_window = 100.0
+gc = <module 'gc' (built-in)>
+threshold = None
+match_meta_annotation = <function match_meta_annotation at 0x7f12bc4dc7d0>
+read_meta_data = <function read_meta_data at 0x7f12bc4dc230>
+wavfile = <module 'scipy.io.wavfile' from '/usr/lib/python2.7/dist-packages/scipy/io/wavfile.pyc'>
+quit = <IPython.core.autocall.ZMQExitAutocall object at 0x7f12fd0d3850>
+struct = <module 'struct' from '/usr/lib/python2.7/struct.pyc'>
+_i9 = def split_music_to_patches(data, annotation, inst_map, label_aggr, length=1,
+                           sr=44100, time_window=100.0, binary=False,
+                           threshold=None):
+    """Split each music file into (length) second patches and label each patch
+
+    Note: for each music file, the last patch that is not long enough is
+          abandoned.
+          And each patch is raveled to have only one row.
+
+    Args:
+        data(dict): the raw input data for each music file
+        annotation(dict): annotation for each music file
+                          calculated as average confidence in this time period
+        inst_map(dict): a dictionary that maps a intrument name to its correct
+                        position in the sorted list of all instruments
+        label_aggr(function): a function that defines the way labels for each
+                              sample chunk is generated, default is np.mean
+        length(int): length of each patch, in seconds
+        sr (int): sample rate of raw audio
+        time_window(float): time windows for average (in milliseconds)
+    Returns:
+        dict: {'X': np array for X, 'y': np array for y, 'present': np array
+                of indicators for whether the instrument is present in the
+                track from which the patch is taken}
+    """
+    res = []
+    patch_size = sr * length
+    for k, v in data.items():
+        for i, e in enumerate(xrange(0, v.shape[1] - patch_size, patch_size)):
+            patch = v[:, e:patch_size+e].ravel()
+            sub_df = annotation[k][(i * length <= annotation[k].time) &
+                                   (annotation[k].time < (i + 1) * length)]
+            if label_aggr is not None:
+                inst_conf = sub_df.apply(label_aggr, 0).drop('time')
+            else:
+                inst_conf = patch_label.patch_label(0, length, time_window,
+                                                    sub_df, binary,
+                                                    threshold).iloc[0]
+            label = np.zeros(len(inst_map), dtype='float32')
+            is_present = np.zeros(len(inst_map), dtype='float32')
+            for j in inst_conf.index:
+                temp = inst_conf[j]
+                # if there are two columns of the same instrument, take maximum
+                if isinstance(temp, pd.Series):
+                    temp = temp.max()
+                label[inst_map[j]] = temp
+                is_present[inst_map[j]] = 1.0
+            res.append((patch, label, is_present, k, (i*length, (i+1)*length)))
+    X, y, present, song_name, time = zip(*res)
+    return {'X': np.array(X), 'y': np.array(y), 'present': np.array(present),
+            'song_name': song_name, 'time': np.array(time, dtype='float32')}
+_i8 = def match_meta_annotation(meta, annotation):
+    """Match instrument number in annotation with real instrument name in meta.
+
+    Note: In the annotation of one mixed track, there can be multiple instances
+          of the same instrument, in which case the same column name appears
+          multiple times in the pandas df
+
+    Args:
+        meta (dict): in the format of {song_name(string): instrument_map(dict)}
+                     instrument_map is of the format eg: {'S01': 'piano'}
+        annotation (dict): {song_name(string): annotation(pandas df)}
+    Returns:
+        list: containing all instruments involved, sorted in alphebic order
+    """
+    assert(len(meta) == len(annotation))
+    all_instruments = set()
+    for k, v in annotation.items():
+        v.rename(columns=meta[k], inplace=True)
+        all_instruments.update(v.columns[1:])
+    return sorted(list(all_instruments))
+_i7 = def groupMetaData(meta, instGroup):
+    """Match instrument number in annotation with real instrument name in meta.
+    Args:
+        meta (dict): in the format of {song_name(string): instrument_map(dict)}
+                     instrument_map is of the format eg: {'S01': 'piano'}
+        instGroup (dict): {instrument: instrumentGroup} eg: {'piano': 'struck'}
+    Returns:
+        groupedMeta (dict): in the format of
+                            {song_name(string): instrument_map(dict)}
+    """
+    groupedMeta = copy.deepcopy(meta)
+    for songName in groupedMeta.keys():
+        for stemName in groupedMeta[songName]:
+            groupedMeta[songName][stemName] = instGroup[groupedMeta[songName]
+                                                        [stemName]]
+    return groupedMeta
+_i6 = def read_meta_data(path, pickle_file=None):
+    """Read the metadata for instrument info, return as dictionary
+    Args:
+        path (string): path to the directory "MedleyDB"
+    Returns:
+        dict: in the format of {song_name(string): instrument_map(dict)}
+              instrument_map is of the format eg: {'S01': 'piano'}
+    """
+    dpath = os.path.join(path, "Audio")
+    dlist = os.listdir(dpath)
+    res = dict()
+    for i in dlist:
+        fpath = os.path.join(dpath, i, '{}_METADATA.yaml'.format(i))
+        with open(fpath, 'r') as f:
+            meta = yaml.load(f)
+        instrument = {k: v['instrument'] for k, v in meta['stems'].items()}
+        res[i] = instrument
+    if pickle_file is not None:
+        with open(pickle_file, 'w') as f:
+            cPickle.dump(res, f)
+    return res
+_i5 = def read_activation_confs(path, pickle_file=None):
+    """Read the annotation files of activation confidence, return as dictionary
+    Args:
+        path (string): path to the directory "MedleyDB"
+    Returns:
+        dict: in the format of {song_name(string): annotation(pandas df)}
+    """
+    dpath = os.path.join(path, 'Annotations', 'Instrument_Activations',
+                         'ACTIVATION_CONF')
+    dlist = os.listdir(dpath)
+    res = dict()
+    for i in dlist:
+        fpath = os.path.join(dpath, i)
+        annotation = pd.read_csv(fpath, index_col=False)
+        k = i[:-20].split('(')[0]
+        k = k.translate(None, "'-")
+        res[k] = annotation
+    if pickle_file is not None:
+        with open(pickle_file, 'w') as f:
+            cPickle.dump(res, f)
+    return res
+_i4 = def normalize_data(data):
+    """Normalize data with respect to each file in place
+
+    For each file, normalize each column using standardization
+
+    Args:
+        data (dict): in format of {song_name(string): song_data(numpy array)}
+    Returns:
+        N/A
+    """
+    for k in data.keys():
+        mean = data[k].mean(axis=1).reshape(2, 1)
+        std = data[k].std(axis=1).reshape(2, 1)
+        data[k] = np.float32(((data[k] - mean) / std))
+_i3 = def read_mixed_from_files(dpath, dlist, pickle_file=None):
+    """Read the mixed track files and return as dictionary
+    Args:
+        dpath (str): path to the directory "MedleyDB/Audio"
+        dlist (list): list of str, each for one mixed track file
+    Returns:
+        dict: in the format of {song_name(string): song_data(numpy array)}
+              song_data two rows n cols. Each row is a channel, each col is a
+              time frame.
+    """
+    res = dict()
+    for i in dlist:
+        fpath = os.path.join(dpath, i, '{}_MIX.wav'.format(i))
+        try:
+            data = wavfile.read(fpath)[1].T
+        except:
+            print "Warning: can't read {}, switch to backup reader". \
+                format(fpath)
+            data = backup_wavfile_reader(fpath).T
+        res[i] = np.float32(data)
+    if pickle_file is not None:
+        with open(pickle_file, 'w') as f:
+            cPickle.dump(res, f)
+    return res
+_i2 = def backup_wavfile_reader(fpath):
+    """Read wav files when scipy wavfile fail to read.
+    Args:
+        fpath (str): path to the wav file to read
+    Returns:
+        numpy array: data read from wav file
+    """
+    f = wave.open(fpath, 'rb')
+    res = []
+    for i in xrange(f.getnframes()):
+        frame = f.readframes(1)
+        x = struct.unpack('=h', frame[:2])[0]
+        y = struct.unpack('=h', frame[2:])[0]
+        res.append([x, y])
+    return np.array(res)
+_i1 = import numpy as np
+import os
+import cPickle
+import pandas as pd
+import yaml
+import wave
+import struct
+import gc
+from scipy.io import wavfile
+from scipy.io import savemat
+import copy
+import patch_label
+__package__ = None
+yaml = <module 'yaml' from '/usr/lib/python2.7/dist-packages/yaml/__init__.pyc'>
+exit = <IPython.core.autocall.ZMQExitAutocall object at 0x7f12fd0d3850>
+get_ipython = <bound method ZMQInteractiveShell.get_ipython of <ipykernel.zmqshell.ZMQInteractiveShell object at 0x7f1302baea90>>
+_i = def split_music_to_patches(data, annotation, inst_map, label_aggr, length=1,
+                           sr=44100, time_window=100.0, binary=False,
+                           threshold=None):
+    """Split each music file into (length) second patches and label each patch
+
+    Note: for each music file, the last patch that is not long enough is
+          abandoned.
+          And each patch is raveled to have only one row.
+
+    Args:
+        data(dict): the raw input data for each music file
+        annotation(dict): annotation for each music file
+                          calculated as average confidence in this time period
+        inst_map(dict): a dictionary that maps a intrument name to its correct
+                        position in the sorted list of all instruments
+        label_aggr(function): a function that defines the way labels for each
+                              sample chunk is generated, default is np.mean
+        length(int): length of each patch, in seconds
+        sr (int): sample rate of raw audio
+        time_window(float): time windows for average (in milliseconds)
+    Returns:
+        dict: {'X': np array for X, 'y': np array for y, 'present': np array
+                of indicators for whether the instrument is present in the
+                track from which the patch is taken}
+    """
+    res = []
+    patch_size = sr * length
+    for k, v in data.items():
+        for i, e in enumerate(xrange(0, v.shape[1] - patch_size, patch_size)):
+            patch = v[:, e:patch_size+e].ravel()
+            sub_df = annotation[k][(i * length <= annotation[k].time) &
+                                   (annotation[k].time < (i + 1) * length)]
+            if label_aggr is not None:
+                inst_conf = sub_df.apply(label_aggr, 0).drop('time')
+            else:
+                inst_conf = patch_label.patch_label(0, length, time_window,
+                                                    sub_df, binary,
+                                                    threshold).iloc[0]
+            label = np.zeros(len(inst_map), dtype='float32')
+            is_present = np.zeros(len(inst_map), dtype='float32')
+            for j in inst_conf.index:
+                temp = inst_conf[j]
+                # if there are two columns of the same instrument, take maximum
+                if isinstance(temp, pd.Series):
+                    temp = temp.max()
+                label[inst_map[j]] = temp
+                is_present[inst_map[j]] = 1.0
+            res.append((patch, label, is_present, k, (i*length, (i+1)*length)))
+    X, y, present, song_name, time = zip(*res)
+    return {'X': np.array(X), 'y': np.array(y), 'present': np.array(present),
+            'song_name': song_name, 'time': np.array(time, dtype='float32')}
+np = <module 'numpy' from '/usr/local/lib/python2.7/dist-packages/numpy/__init__.pyc'>
+length = 1
+__doc__ = Automatically created module for IPython interactive environment
+savemat = <function savemat at 0x7f12cba707d0>
+split_music_to_patches = <function split_music_to_patches at 0x7f12bc4dca28>
+cPickle = <module 'cPickle' (built-in)>
+save_size = 20
+pd = <module 'pandas' from '/usr/local/lib/python2.7/dist-packages/pandas/__init__.pyc'>
+norm_channel = False
+groupMetaData = <function groupMetaData at 0x7f12bc4dc410>
+__builtins__ = <module '__builtin__' (built-in)>
+_ih = ['', u'import numpy as np\nimport os\nimport cPickle\nimport pandas as pd\nimport yaml\nimport wave\nimport struct\nimport gc\nfrom scipy.io import wavfile\nfrom scipy.io import savemat\nimport copy\nimport patch_label', u'def backup_wavfile_reader(fpath):\n    """Read wav files when scipy wavfile fail to read.\n    Args:\n        fpath (str): path to the wav file to read\n    Returns:\n        numpy array: data read from wav file\n    """\n    f = wave.open(fpath, \'rb\')\n    res = []\n    for i in xrange(f.getnframes()):\n        frame = f.readframes(1)\n        x = struct.unpack(\'=h\', frame[:2])[0]\n        y = struct.unpack(\'=h\', frame[2:])[0]\n        res.append([x, y])\n    return np.array(res)', u'def read_mixed_from_files(dpath, dlist, pickle_file=None):\n    """Read the mixed track files and return as dictionary\n    Args:\n        dpath (str): path to the directory "MedleyDB/Audio"\n        dlist (list): list of str, each for one mixed track file\n    Returns:\n        dict: in the format of {song_name(string): song_data(numpy array)}\n              song_data two rows n cols. Each row is a channel, each col is a\n              time frame.\n    """\n    res = dict()\n    for i in dlist:\n        fpath = os.path.join(dpath, i, \'{}_MIX.wav\'.format(i))\n        try:\n            data = wavfile.read(fpath)[1].T\n        except:\n            print "Warning: can\'t read {}, switch to backup reader".                 format(fpath)\n            data = backup_wavfile_reader(fpath).T\n        res[i] = np.float32(data)\n    if pickle_file is not None:\n        with open(pickle_file, \'w\') as f:\n            cPickle.dump(res, f)\n    return res', u'def normalize_data(data):\n    """Normalize data with respect to each file in place\n\n    For each file, normalize each column using standardization\n\n    Args:\n        data (dict): in format of {song_name(string): song_data(numpy array)}\n    Returns:\n        N/A\n    """\n    for k in data.keys():\n        mean = data[k].mean(axis=1).reshape(2, 1)\n        std = data[k].std(axis=1).reshape(2, 1)\n        data[k] = np.float32(((data[k] - mean) / std))', u'def read_activation_confs(path, pickle_file=None):\n    """Read the annotation files of activation confidence, return as dictionary\n    Args:\n        path (string): path to the directory "MedleyDB"\n    Returns:\n        dict: in the format of {song_name(string): annotation(pandas df)}\n    """\n    dpath = os.path.join(path, \'Annotations\', \'Instrument_Activations\',\n                         \'ACTIVATION_CONF\')\n    dlist = os.listdir(dpath)\n    res = dict()\n    for i in dlist:\n        fpath = os.path.join(dpath, i)\n        annotation = pd.read_csv(fpath, index_col=False)\n        k = i[:-20].split(\'(\')[0]\n        k = k.translate(None, "\'-")\n        res[k] = annotation\n    if pickle_file is not None:\n        with open(pickle_file, \'w\') as f:\n            cPickle.dump(res, f)\n    return res', u'def read_meta_data(path, pickle_file=None):\n    """Read the metadata for instrument info, return as dictionary\n    Args:\n        path (string): path to the directory "MedleyDB"\n    Returns:\n        dict: in the format of {song_name(string): instrument_map(dict)}\n              instrument_map is of the format eg: {\'S01\': \'piano\'}\n    """\n    dpath = os.path.join(path, "Audio")\n    dlist = os.listdir(dpath)\n    res = dict()\n    for i in dlist:\n        fpath = os.path.join(dpath, i, \'{}_METADATA.yaml\'.format(i))\n        with open(fpath, \'r\') as f:\n            meta = yaml.load(f)\n        instrument = {k: v[\'instrument\'] for k, v in meta[\'stems\'].items()}\n        res[i] = instrument\n    if pickle_file is not None:\n        with open(pickle_file, \'w\') as f:\n            cPickle.dump(res, f)\n    return res', u'def groupMetaData(meta, instGroup):\n    """Match instrument number in annotation with real instrument name in meta.\n    Args:\n        meta (dict): in the format of {song_name(string): instrument_map(dict)}\n                     instrument_map is of the format eg: {\'S01\': \'piano\'}\n        instGroup (dict): {instrument: instrumentGroup} eg: {\'piano\': \'struck\'}\n    Returns:\n        groupedMeta (dict): in the format of\n                            {song_name(string): instrument_map(dict)}\n    """\n    groupedMeta = copy.deepcopy(meta)\n    for songName in groupedMeta.keys():\n        for stemName in groupedMeta[songName]:\n            groupedMeta[songName][stemName] = instGroup[groupedMeta[songName]\n                                                        [stemName]]\n    return groupedMeta', u'def match_meta_annotation(meta, annotation):\n    """Match instrument number in annotation with real instrument name in meta.\n\n    Note: In the annotation of one mixed track, there can be multiple instances\n          of the same instrument, in which case the same column name appears\n          multiple times in the pandas df\n\n    Args:\n        meta (dict): in the format of {song_name(string): instrument_map(dict)}\n                     instrument_map is of the format eg: {\'S01\': \'piano\'}\n        annotation (dict): {song_name(string): annotation(pandas df)}\n    Returns:\n        list: containing all instruments involved, sorted in alphebic order\n    """\n    assert(len(meta) == len(annotation))\n    all_instruments = set()\n    for k, v in annotation.items():\n        v.rename(columns=meta[k], inplace=True)\n        all_instruments.update(v.columns[1:])\n    return sorted(list(all_instruments))', u'def split_music_to_patches(data, annotation, inst_map, label_aggr, length=1,\n                           sr=44100, time_window=100.0, binary=False,\n                           threshold=None):\n    """Split each music file into (length) second patches and label each patch\n\n    Note: for each music file, the last patch that is not long enough is\n          abandoned.\n          And each patch is raveled to have only one row.\n\n    Args:\n        data(dict): the raw input data for each music file\n        annotation(dict): annotation for each music file\n                          calculated as average confidence in this time period\n        inst_map(dict): a dictionary that maps a intrument name to its correct\n                        position in the sorted list of all instruments\n        label_aggr(function): a function that defines the way labels for each\n                              sample chunk is generated, default is np.mean\n        length(int): length of each patch, in seconds\n        sr (int): sample rate of raw audio\n        time_window(float): time windows for average (in milliseconds)\n    Returns:\n        dict: {\'X\': np array for X, \'y\': np array for y, \'present\': np array\n                of indicators for whether the instrument is present in the\n                track from which the patch is taken}\n    """\n    res = []\n    patch_size = sr * length\n    for k, v in data.items():\n        for i, e in enumerate(xrange(0, v.shape[1] - patch_size, patch_size)):\n            patch = v[:, e:patch_size+e].ravel()\n            sub_df = annotation[k][(i * length <= annotation[k].time) &\n                                   (annotation[k].time < (i + 1) * length)]\n            if label_aggr is not None:\n                inst_conf = sub_df.apply(label_aggr, 0).drop(\'time\')\n            else:\n                inst_conf = patch_label.patch_label(0, length, time_window,\n                                                    sub_df, binary,\n                                                    threshold).iloc[0]\n            label = np.zeros(len(inst_map), dtype=\'float32\')\n            is_present = np.zeros(len(inst_map), dtype=\'float32\')\n            for j in inst_conf.index:\n                temp = inst_conf[j]\n                # if there are two columns of the same instrument, take maximum\n                if isinstance(temp, pd.Series):\n                    temp = temp.max()\n                label[inst_map[j]] = temp\n                is_present[inst_map[j]] = 1.0\n            res.append((patch, label, is_present, k, (i*length, (i+1)*length)))\n    X, y, present, song_name, time = zip(*res)\n    return {\'X\': np.array(X), \'y\': np.array(y), \'present\': np.array(present),\n            \'song_name\': song_name, \'time\': np.array(time, dtype=\'float32\')}', u"in_path = '../../data'\nlength=1\ntime_window=100.0\nbinary=False\nthreshold=None\nout_path=os.curdir\nsave_size=20\nnorm_channel=False\nlabel_aggr=None\nstart_from=0\ngroupID='Group 4'\n#prep_data(in_path, length=1, time_window=100.0, binary=False, threshold=None)\n\n# save parameters for this run\nto_write = ['{} = {}'.format(k, v) for k, v in locals().items()]\nwith open(os.path.join(out_path, 'config.txt'), 'wb') as f:\n    f.write('\\n'.join(to_write))\n\n# read annotations and match with metadata\nanno_pkl = os.path.join(out_path, 'anno_label.pkl')\nannotation = read_activation_confs(in_path)\nmeta = read_meta_data(in_path)"]
+normalize_data = <function normalize_data at 0x7f12f578e050>
+wave = <module 'wave' from '/usr/lib/python2.7/wave.pyc'>
+binary = False
+__name__ = __main__
+___ = 
+copy = <module 'copy' from '/usr/lib/python2.7/copy.pyc'>
+_ = 
+_sh = <module 'IPython.core.shadowns' from '/usr/local/lib/python2.7/dist-packages/IPython/core/shadowns.pyc'>
+out_path = .
+read_activation_confs = <function read_activation_confs at 0x7f12bc4dc050>
+start_from = 0
+groupID = Group 4
+_iii = def groupMetaData(meta, instGroup):
+    """Match instrument number in annotation with real instrument name in meta.
+    Args:
+        meta (dict): in the format of {song_name(string): instrument_map(dict)}
+                     instrument_map is of the format eg: {'S01': 'piano'}
+        instGroup (dict): {instrument: instrumentGroup} eg: {'piano': 'struck'}
+    Returns:
+        groupedMeta (dict): in the format of
+                            {song_name(string): instrument_map(dict)}
+    """
+    groupedMeta = copy.deepcopy(meta)
+    for songName in groupedMeta.keys():
+        for stemName in groupedMeta[songName]:
+            groupedMeta[songName][stemName] = instGroup[groupedMeta[songName]
+                                                        [stemName]]
+    return groupedMeta
+_i10 = in_path = '../../data'
+length=1
+time_window=100.0
+binary=False
+threshold=None
+out_path=os.curdir
+save_size=20
+norm_channel=False
+label_aggr=None
+start_from=0
+groupID='Group 4'
+#prep_data(in_path, length=1, time_window=100.0, binary=False, threshold=None)
+
+# save parameters for this run
+to_write = ['{} = {}'.format(k, v) for k, v in locals().items()]
+with open(os.path.join(out_path, 'config.txt'), 'wb') as f:
+    f.write('\n'.join(to_write))
+
+# read annotations and match with metadata
+anno_pkl = os.path.join(out_path, 'anno_label.pkl')
+annotation = read_activation_confs(in_path)
+meta = read_meta_data(in_path)
+label_aggr = None
+_ii = def match_meta_annotation(meta, annotation):
+    """Match instrument number in annotation with real instrument name in meta.
+
+    Note: In the annotation of one mixed track, there can be multiple instances
+          of the same instrument, in which case the same column name appears
+          multiple times in the pandas df
+
+    Args:
+        meta (dict): in the format of {song_name(string): instrument_map(dict)}
+                     instrument_map is of the format eg: {'S01': 'piano'}
+        annotation (dict): {song_name(string): annotation(pandas df)}
+    Returns:
+        list: containing all instruments involved, sorted in alphebic order
+    """
+    assert(len(meta) == len(annotation))
+    all_instruments = set()
+    for k, v in annotation.items():
+        v.rename(columns=meta[k], inplace=True)
+        all_instruments.update(v.columns[1:])
+    return sorted(list(all_instruments))
+In = ['', u'import numpy as np\nimport os\nimport cPickle\nimport pandas as pd\nimport yaml\nimport wave\nimport struct\nimport gc\nfrom scipy.io import wavfile\nfrom scipy.io import savemat\nimport copy\nimport patch_label', u'def backup_wavfile_reader(fpath):\n    """Read wav files when scipy wavfile fail to read.\n    Args:\n        fpath (str): path to the wav file to read\n    Returns:\n        numpy array: data read from wav file\n    """\n    f = wave.open(fpath, \'rb\')\n    res = []\n    for i in xrange(f.getnframes()):\n        frame = f.readframes(1)\n        x = struct.unpack(\'=h\', frame[:2])[0]\n        y = struct.unpack(\'=h\', frame[2:])[0]\n        res.append([x, y])\n    return np.array(res)', u'def read_mixed_from_files(dpath, dlist, pickle_file=None):\n    """Read the mixed track files and return as dictionary\n    Args:\n        dpath (str): path to the directory "MedleyDB/Audio"\n        dlist (list): list of str, each for one mixed track file\n    Returns:\n        dict: in the format of {song_name(string): song_data(numpy array)}\n              song_data two rows n cols. Each row is a channel, each col is a\n              time frame.\n    """\n    res = dict()\n    for i in dlist:\n        fpath = os.path.join(dpath, i, \'{}_MIX.wav\'.format(i))\n        try:\n            data = wavfile.read(fpath)[1].T\n        except:\n            print "Warning: can\'t read {}, switch to backup reader".                 format(fpath)\n            data = backup_wavfile_reader(fpath).T\n        res[i] = np.float32(data)\n    if pickle_file is not None:\n        with open(pickle_file, \'w\') as f:\n            cPickle.dump(res, f)\n    return res', u'def normalize_data(data):\n    """Normalize data with respect to each file in place\n\n    For each file, normalize each column using standardization\n\n    Args:\n        data (dict): in format of {song_name(string): song_data(numpy array)}\n    Returns:\n        N/A\n    """\n    for k in data.keys():\n        mean = data[k].mean(axis=1).reshape(2, 1)\n        std = data[k].std(axis=1).reshape(2, 1)\n        data[k] = np.float32(((data[k] - mean) / std))', u'def read_activation_confs(path, pickle_file=None):\n    """Read the annotation files of activation confidence, return as dictionary\n    Args:\n        path (string): path to the directory "MedleyDB"\n    Returns:\n        dict: in the format of {song_name(string): annotation(pandas df)}\n    """\n    dpath = os.path.join(path, \'Annotations\', \'Instrument_Activations\',\n                         \'ACTIVATION_CONF\')\n    dlist = os.listdir(dpath)\n    res = dict()\n    for i in dlist:\n        fpath = os.path.join(dpath, i)\n        annotation = pd.read_csv(fpath, index_col=False)\n        k = i[:-20].split(\'(\')[0]\n        k = k.translate(None, "\'-")\n        res[k] = annotation\n    if pickle_file is not None:\n        with open(pickle_file, \'w\') as f:\n            cPickle.dump(res, f)\n    return res', u'def read_meta_data(path, pickle_file=None):\n    """Read the metadata for instrument info, return as dictionary\n    Args:\n        path (string): path to the directory "MedleyDB"\n    Returns:\n        dict: in the format of {song_name(string): instrument_map(dict)}\n              instrument_map is of the format eg: {\'S01\': \'piano\'}\n    """\n    dpath = os.path.join(path, "Audio")\n    dlist = os.listdir(dpath)\n    res = dict()\n    for i in dlist:\n        fpath = os.path.join(dpath, i, \'{}_METADATA.yaml\'.format(i))\n        with open(fpath, \'r\') as f:\n            meta = yaml.load(f)\n        instrument = {k: v[\'instrument\'] for k, v in meta[\'stems\'].items()}\n        res[i] = instrument\n    if pickle_file is not None:\n        with open(pickle_file, \'w\') as f:\n            cPickle.dump(res, f)\n    return res', u'def groupMetaData(meta, instGroup):\n    """Match instrument number in annotation with real instrument name in meta.\n    Args:\n        meta (dict): in the format of {song_name(string): instrument_map(dict)}\n                     instrument_map is of the format eg: {\'S01\': \'piano\'}\n        instGroup (dict): {instrument: instrumentGroup} eg: {\'piano\': \'struck\'}\n    Returns:\n        groupedMeta (dict): in the format of\n                            {song_name(string): instrument_map(dict)}\n    """\n    groupedMeta = copy.deepcopy(meta)\n    for songName in groupedMeta.keys():\n        for stemName in groupedMeta[songName]:\n            groupedMeta[songName][stemName] = instGroup[groupedMeta[songName]\n                                                        [stemName]]\n    return groupedMeta', u'def match_meta_annotation(meta, annotation):\n    """Match instrument number in annotation with real instrument name in meta.\n\n    Note: In the annotation of one mixed track, there can be multiple instances\n          of the same instrument, in which case the same column name appears\n          multiple times in the pandas df\n\n    Args:\n        meta (dict): in the format of {song_name(string): instrument_map(dict)}\n                     instrument_map is of the format eg: {\'S01\': \'piano\'}\n        annotation (dict): {song_name(string): annotation(pandas df)}\n    Returns:\n        list: containing all instruments involved, sorted in alphebic order\n    """\n    assert(len(meta) == len(annotation))\n    all_instruments = set()\n    for k, v in annotation.items():\n        v.rename(columns=meta[k], inplace=True)\n        all_instruments.update(v.columns[1:])\n    return sorted(list(all_instruments))', u'def split_music_to_patches(data, annotation, inst_map, label_aggr, length=1,\n                           sr=44100, time_window=100.0, binary=False,\n                           threshold=None):\n    """Split each music file into (length) second patches and label each patch\n\n    Note: for each music file, the last patch that is not long enough is\n          abandoned.\n          And each patch is raveled to have only one row.\n\n    Args:\n        data(dict): the raw input data for each music file\n        annotation(dict): annotation for each music file\n                          calculated as average confidence in this time period\n        inst_map(dict): a dictionary that maps a intrument name to its correct\n                        position in the sorted list of all instruments\n        label_aggr(function): a function that defines the way labels for each\n                              sample chunk is generated, default is np.mean\n        length(int): length of each patch, in seconds\n        sr (int): sample rate of raw audio\n        time_window(float): time windows for average (in milliseconds)\n    Returns:\n        dict: {\'X\': np array for X, \'y\': np array for y, \'present\': np array\n                of indicators for whether the instrument is present in the\n                track from which the patch is taken}\n    """\n    res = []\n    patch_size = sr * length\n    for k, v in data.items():\n        for i, e in enumerate(xrange(0, v.shape[1] - patch_size, patch_size)):\n            patch = v[:, e:patch_size+e].ravel()\n            sub_df = annotation[k][(i * length <= annotation[k].time) &\n                                   (annotation[k].time < (i + 1) * length)]\n            if label_aggr is not None:\n                inst_conf = sub_df.apply(label_aggr, 0).drop(\'time\')\n            else:\n                inst_conf = patch_label.patch_label(0, length, time_window,\n                                                    sub_df, binary,\n                                                    threshold).iloc[0]\n            label = np.zeros(len(inst_map), dtype=\'float32\')\n            is_present = np.zeros(len(inst_map), dtype=\'float32\')\n            for j in inst_conf.index:\n                temp = inst_conf[j]\n                # if there are two columns of the same instrument, take maximum\n                if isinstance(temp, pd.Series):\n                    temp = temp.max()\n                label[inst_map[j]] = temp\n                is_present[inst_map[j]] = 1.0\n            res.append((patch, label, is_present, k, (i*length, (i+1)*length)))\n    X, y, present, song_name, time = zip(*res)\n    return {\'X\': np.array(X), \'y\': np.array(y), \'present\': np.array(present),\n            \'song_name\': song_name, \'time\': np.array(time, dtype=\'float32\')}', u"in_path = '../../data'\nlength=1\ntime_window=100.0\nbinary=False\nthreshold=None\nout_path=os.curdir\nsave_size=20\nnorm_channel=False\nlabel_aggr=None\nstart_from=0\ngroupID='Group 4'\n#prep_data(in_path, length=1, time_window=100.0, binary=False, threshold=None)\n\n# save parameters for this run\nto_write = ['{} = {}'.format(k, v) for k, v in locals().items()]\nwith open(os.path.join(out_path, 'config.txt'), 'wb') as f:\n    f.write('\\n'.join(to_write))\n\n# read annotations and match with metadata\nanno_pkl = os.path.join(out_path, 'anno_label.pkl')\nannotation = read_activation_confs(in_path)\nmeta = read_meta_data(in_path)"]
+in_path = ../../data
+os = <module 'os' from '/usr/lib/python2.7/os.pyc'>
+_oh = {}
+Out = {}
